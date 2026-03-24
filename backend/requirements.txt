@@ -1,0 +1,11 @@
+# requirements.txt - Python dependencies for the RAG tool backend
+# Install these in the Lambda layer: pip install -r requirements.txt -t layers/dependencies/python/
+
+# AWS SDK for Python - used for all AWS service interactions
+boto3>=1.35.0
+
+# PDF text extraction library
+pypdf>=4.0.0
+
+# Microsoft Word (.docx) document text extraction
+python-docx>=1.1.0

@@ -1,0 +1,9 @@
+/* index.css - Global styles and Tailwind CSS imports */
+/* These three directives load Tailwind's base, component, and utility styles */
+
+/* Base styles: CSS reset and default element styles */
+@tailwind base;
+/* Component styles: pre-built component classes */
+@tailwind components;
+/* Utility styles: all Tailwind utility classes (margin, padding, colors, etc.) */
+@tailwind utilities;
