@@ -1,433 +1,218 @@
 # RAG Document Tool - AWS-Powered Document Search, Generation & Audit
 
-A fully AWS-hosted tool for searching, generating, and auditing documents using Retrieval Augmented Generation (RAG). Built with Amazon Bedrock Knowledge Bases, Lambda, API Gateway, CloudFront, and WAF.
+Fully AWS-hosted tool for searching, generating, and auditing documents using Retrieval Augmented Generation (RAG). Uses Amazon Bedrock Knowledge Bases, Lambda, API Gateway, CloudFront, and WAF.
 
 ---
 
-## Table of Contents
+## What This Tool Does
 
-1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [Features](#features)
-4. [Prerequisites](#prerequisites)
-5. [Project Structure](#project-structure)
-6. [Setup Instructions](#setup-instructions)
-7. [Configuration](#configuration)
-8. [Deployment](#deployment)
-9. [Usage Guide](#usage-guide)
-10. [Adding New Categories](#adding-new-categories)
-11. [Troubleshooting](#troubleshooting)
-12. [Cost Estimates](#cost-estimates)
-13. [Security](#security)
-
----
-
-## Overview
-
-This tool provides three core capabilities:
-
-1. **Search & Generate**: Upload a document or enter text, search for relevant reference documents in S3 using RAG, review results, then generate a new draft document matching the style of the references.
-2. **File Manager**: Browse, upload, and delete documents in S3 organized by category folders. Uploaded files are automatically indexed for RAG search.
-3. **Document Audit**: Upload two documents - one to audit and one containing criteria - and receive a structured report comparing the document against each extracted criterion.
-
-All infrastructure runs entirely on AWS with IP-based access restriction.
+1. **Search & Generate** — Upload a document or type text. The tool finds relevant reference documents in S3 using vector search, shows you the matches with relevant passages, then generates a new draft matching the style of the references.
+2. **File Manager** — Browse, upload, and delete documents in S3 organized by category folders. New uploads are automatically indexed for search.
+3. **Document Audit** — Upload a document and a criteria reference file. The tool extracts every requirement from the reference and evaluates your document against each one.
 
 ---
 
 ## Architecture
 
 ```
-                                AWS Cloud (us-east-1)
-┌──────────────────────────────────────────────────────────────────────────┐
-│                                                                          │
-│  User (Allowed IP)                                                       │
-│       │                                                                  │
-│       ▼                                                                  │
-│  ┌─────────┐     ┌────────────┐     ┌──────────────────┐                │
-│  │ AWS WAF  │────▶│ CloudFront │────▶│  S3 (Frontend)   │                │
-│  │ IP Allow │     │    CDN     │     │  React SPA       │                │
-│  └─────────┘     └─────┬──────┘     └──────────────────┘                │
-│                         │ /api/*                                         │
-│                         ▼                                                │
-│               ┌───────────────┐     ┌──────────────────────┐            │
-│               │ API Gateway   │────▶│ Lambda Functions     │            │
-│               │ HTTP API v2   │     │ (Python 3.12)        │            │
-│               └───────────────┘     │                      │            │
-│                                     │ • search.py          │            │
-│                                     │ • generate.py        │            │
-│                                     │ • upload.py          │            │
-│                                     │ • files.py           │            │
-│                                     │ • audit.py           │            │
-│                                     │ • categories.py      │            │
-│                                     └──────┬───────────────┘            │
-│                                            │                             │
-│                    ┌───────────────────────┼──────────────────┐          │
-│                    ▼                       ▼                  ▼          │
-│          ┌──────────────┐     ┌──────────────────┐  ┌──────────────┐   │
-│          │ S3 Documents │     │ Bedrock KB       │  │ Bedrock LLM  │   │
-│          │ Bucket       │     │ + S3 Vectors     │  │ Claude Haiku │   │
-│          │              │     │ + Titan Embed V2 │  │ Claude Sonnet│   │
-│          │ /tech-approach/│   └──────────────────┘  └──────────────┘   │
-│          │ /org-approach/ │                                              │
-│          │ /past-perf/    │                                              │
-│          │ /resumes/      │                                              │
-│          └──────────────┘                                               │
-└──────────────────────────────────────────────────────────────────────────┘
+User (Allowed IP) → WAF → CloudFront → S3 (React frontend)
+                                      → API Gateway → Lambda → S3 (documents)
+                                                             → Bedrock KB (RAG search)
+                                                             → Bedrock LLM (Claude)
 ```
 
-### AWS Services Used
-
-| Service | Purpose | Cost Impact |
-|---------|---------|-------------|
-| **S3** | Document storage + frontend hosting | ~$1-3/month |
-| **CloudFront** | CDN, HTTPS, routes /api/* to API Gateway | ~$1-2/month |
-| **WAF** | IP-based access restriction | ~$6/month |
-| **API Gateway v2** | HTTP API routing to Lambda | <$1/month |
-| **Lambda** | Backend compute (Python 3.12) | ~$1-5/month |
-| **Bedrock Knowledge Bases** | Managed RAG (chunking, embedding, retrieval) | No extra charge |
-| **Bedrock - Titan Embed V2** | Text-to-vector embeddings | <$1/month |
-| **Bedrock - Claude 3.5 Haiku** | RAG generation (draft documents) | ~$5-15/month |
-| **Bedrock - Claude Sonnet** | Document audit analysis | ~$2-10/month |
-
-**Estimated total: ~$20-50/month** for ~5 users, ~100 queries/day, ~500 documents.
-
----
-
-## Features
-
-### Search & Generate
-- Upload a PDF, DOCX, or TXT file and/or type a text query
-- Select a document category to narrow the search (or search all)
-- Select a writing tone (Professional, Technical, Conversational, Formal, Concise)
-- View matching documents with relevance scores and relevant passages
-- Select which results to use as references
-- Generate a new draft document matching the style of selected references
-- Copy generated text to clipboard
-
-### File Manager
-- Browse all documents in S3, filtered by category
-- Upload new documents to any category
-- Delete documents from S3
-- Automatic Knowledge Base sync after upload
-
-### Document Audit
-- Upload any document to audit + any reference file containing criteria
-- LLM extracts criteria from the reference (works with any format)
-- Structured report: each criterion gets MEETS / PARTIALLY MEETS / DOES NOT MEET
-- Evidence quotes and improvement recommendations
+| Service | Role | ~Cost/month |
+|---------|------|-------------|
+| S3 | Document storage + frontend hosting | $2-8 |
+| CloudFront + WAF | CDN, HTTPS, IP restriction | $7-8 |
+| API Gateway v2 | HTTP API routing | <$1 |
+| Lambda (Python 3.12) | Backend compute | $1-5 |
+| Bedrock KB + S3 Vectors | Managed RAG pipeline | $1-5 |
+| Bedrock Titan Embed V2 | Text embeddings | <$1 |
+| Bedrock Claude Haiku | Draft generation | $5-15 |
+| Bedrock Claude Sonnet | Document audit | $2-10 |
+| **Total** | | **~$20-50** |
 
 ---
 
 ## Prerequisites
 
-Before setting up this tool, ensure you have the following installed on your machine:
+Install these on the machine where you will run deployment commands:
 
-1. **Node.js 18+** - Download from https://nodejs.org/
-   - Verify: `node --version` (should show v18.x or higher)
-   - Verify: `npm --version` (should show 9.x or higher)
+1. **Node.js 18+** — https://nodejs.org/ (verify: `node --version`)
+2. **Python 3.12+** — https://python.org/ (verify: `python3 --version`)
+3. **AWS CLI v2** — https://aws.amazon.com/cli/ (verify: `aws --version`)
+4. **AWS CDK CLI** — `npm install -g aws-cdk` (verify: `cdk --version`)
+5. **AWS account** with an IAM user that has:
+   - AdministratorAccess (for CDK deployment)
+   - `aws-marketplace:Subscribe` permission (for Bedrock model auto-subscription)
 
-2. **Python 3.12+** - Download from https://python.org/
-   - Verify: `python3 --version` (should show 3.12.x or higher)
-   - Verify: `pip3 --version`
+Configure credentials: `aws configure` → enter Access Key, Secret Key, region `us-east-1`, output `json`
 
-3. **AWS CLI v2** - Download from https://aws.amazon.com/cli/
-   - Verify: `aws --version` (should show aws-cli/2.x)
-   - Configure: `aws configure` (enter your Access Key, Secret Key, and region `us-east-1`)
+---
 
-4. **AWS CDK CLI** - Install globally via npm:
-   ```bash
-   npm install -g aws-cdk
+## Setup Instructions (Complete Deployment Guide)
+
+### Step 1: Complete the Anthropic First-Time-Use Form
+
+Bedrock models are enabled by default in commercial regions. Amazon Titan models work immediately. **Anthropic Claude models require a one-time use case form** per account.
+
+1. Sign in to **AWS Console** → region **us-east-1 (N. Virginia)**
+2. Go to **Amazon Bedrock** → **Model catalog** (left sidebar)
+3. Click on any **Anthropic Claude** model (e.g., Claude 3.5 Haiku)
+4. You'll be prompted to fill out a First Time Use form:
+   - Company name, website, intended users, industry, use case description
+   - Example use case: "Internal document search and generation tool"
+5. Submit. **Access is granted immediately.**
+6. If you are NOT prompted, your account already has access. Verify by running a test in **Bedrock > Playground**.
+
+### Step 2: Configure Your IP Address
+
+1. Go to https://whatismyip.com and note your **IPv4 address**
+2. Edit `cdk/lib/config.ts`, find `ALLOWED_IPS`, replace the placeholder:
+   ```typescript
+   export const ALLOWED_IPS: string[] = [
+     '203.0.113.45/32',  // Your actual IP here
+   ];
    ```
-   - Verify: `cdk --version`
 
-5. **AWS Account** with:
-   - IAM user or role with Administrator access (for CDK deployment)
-   - Bedrock model access enabled (see Setup Instructions)
-
----
-
-## Project Structure
-
-```
-AWSClaude/
-├── README.md                          # This file
-├── setup-steps.csv                    # Step-by-step setup guide (CSV)
-├── cdk/                               # AWS CDK Infrastructure as Code
-│   ├── package.json                   # CDK npm dependencies
-│   ├── tsconfig.json                  # TypeScript configuration
-│   ├── cdk.json                       # CDK app configuration
-│   ├── bin/app.ts                     # CDK app entry point
-│   └── lib/
-│       ├── config.ts                  # CENTRAL CONFIG: categories, IPs, models
-│       ├── rag-stack.ts               # S3, Lambda, API GW, CloudFront, WAF
-│       └── bedrock-stack.ts           # Bedrock Knowledge Base, Data Source
-├── backend/                           # Python Lambda function code
-│   ├── requirements.txt               # Python dependencies
-│   ├── shared/                        # Shared utilities
-│   │   ├── config.py                  # Backend configuration (reads env vars)
-│   │   ├── document_parser.py         # PDF/DOCX/TXT text extraction
-│   │   ├── s3_utils.py                # S3 operations (upload, list, delete)
-│   │   ├── bedrock_utils.py           # Bedrock model invocation wrappers
-│   │   └── knowledge_base.py          # Bedrock KB Retrieve + Ingestion
-│   └── handlers/                      # Lambda function handlers
-│       ├── search.py                  # POST /api/search
-│       ├── generate.py                # POST /api/generate
-│       ├── upload.py                  # POST /api/upload
-│       ├── files.py                   # GET/DELETE /api/files
-│       ├── audit.py                   # POST /api/audit
-│       └── categories.py             # GET /api/categories
-├── frontend/                          # React frontend application
-│   ├── package.json                   # Frontend npm dependencies
-│   ├── vite.config.ts                 # Vite build configuration
-│   ├── tailwind.config.js             # Tailwind CSS configuration
-│   ├── index.html                     # HTML entry point
-│   └── src/
-│       ├── main.tsx                   # React app entry point
-│       ├── App.tsx                    # Router and layout setup
-│       ├── api/client.ts             # API client (axios)
-│       ├── types/index.ts            # TypeScript interfaces
-│       ├── config/categories.ts      # Default category config
-│       ├── pages/                    # Page components
-│       │   ├── SearchPage.tsx        # Search & Generate workflow
-│       │   ├── FilesPage.tsx         # S3 File Manager
-│       │   └── AuditPage.tsx         # Document Audit
-│       └── components/               # Reusable UI components
-│           ├── Layout.tsx            # Nav bar and page wrapper
-│           ├── FileUploader.tsx      # Drag-and-drop file upload
-│           ├── CategorySelector.tsx  # Category dropdown
-│           ├── ToneSelector.tsx      # Tone dropdown
-│           ├── SearchResults.tsx     # Results with checkboxes
-│           ├── GeneratedOutput.tsx   # Generated draft display
-│           ├── FileBrowser.tsx       # S3 file table
-│           └── AuditReport.tsx       # Audit results display
-└── scripts/                          # Deployment and utility scripts
-    ├── deploy.sh                     # Full deployment script
-    ├── seed-data.sh                  # Create S3 folders + upload samples
-    └── sync-knowledge-base.sh        # Manually trigger KB sync
-```
-
----
-
-## Setup Instructions
-
-### Step 1: Enable Bedrock Model Access
-
-Before deploying, you must enable access to the required Bedrock models:
-
-1. Sign in to the **AWS Console** in the **us-east-1** region
-2. Navigate to **Amazon Bedrock** > **Model access** (left sidebar)
-3. Click **Manage model access**
-4. Enable the following models:
-   - **Amazon Titan Text Embeddings V2** (amazon.titan-embed-text-v2:0)
-   - **Anthropic Claude 3.5 Haiku** (anthropic.claude-3-5-haiku-20241022-v1:0)
-   - **Anthropic Claude Sonnet** (anthropic.claude-sonnet-4-20250514-v1:0)
-5. Click **Request model access** and wait for approval (usually instant for Titan, may take minutes for Claude)
-
-### Step 2: Configure Your IP Addresses
-
-Edit `cdk/lib/config.ts` and replace the placeholder IP with your actual IP address(es):
-
-```typescript
-export const ALLOWED_IPS: string[] = [
-  'YOUR.PUBLIC.IP.ADDRESS/32',  // Replace with your actual public IP
-  // Add more IPs as needed
-];
-```
-
-To find your public IP: visit https://whatismyip.com
-
-### Step 3: Install Dependencies
+### Step 3: Build the Lambda Layer
 
 ```bash
-# Install CDK dependencies
-cd cdk
-npm install
-
-# Install Python dependencies for Lambda layer
-cd ../backend
+cd backend
 mkdir -p layers/dependencies/python
 pip install -r requirements.txt -t layers/dependencies/python/
+```
 
-# Install frontend dependencies
-cd ../frontend
+This installs `pypdf` and `python-docx` into the Lambda layer directory. (boto3 is already in the Lambda runtime.)
+
+### Step 4: Install CDK Dependencies
+
+```bash
+cd cdk
 npm install
 ```
 
-### Step 4: Bootstrap CDK (First Time Only)
+### Step 5: Bootstrap CDK (First Time Only)
+
+```bash
+cdk bootstrap
+```
+
+### Step 6: Deploy Core Infrastructure (First Pass — Without KB)
+
+```bash
+cdk deploy RagToolStack --require-approval broadening
+```
+
+Type **y** when prompted to approve IAM changes. Takes 5-10 minutes.
+
+**Save the output values:**
+- `DistributionUrl` — your application URL
+- `DocumentsBucketName` — where documents go
+- `FrontendBucketName` — where the frontend goes
+- `DistributionId` — for cache invalidation
+
+Retrieve them anytime: `aws cloudformation describe-stacks --stack-name RagToolStack --query "Stacks[0].Outputs" --output table`
+
+### Step 7: Create S3 Category Folders
+
+Replace `BUCKET` with your `DocumentsBucketName`:
+
+```bash
+aws s3api put-object --bucket BUCKET --key "tech-approach/" --content-length 0
+aws s3api put-object --bucket BUCKET --key "organizational-approach/" --content-length 0
+aws s3api put-object --bucket BUCKET --key "past-performance/" --content-length 0
+aws s3api put-object --bucket BUCKET --key "resumes/" --content-length 0
+```
+
+### Step 8: Upload Your Documents
+
+```bash
+aws s3 cp your-tech-proposal.pdf s3://BUCKET/tech-approach/
+aws s3 cp your-resume.pdf s3://BUCKET/resumes/
+# Or upload a whole folder:
+aws s3 sync ./my-docs/ s3://BUCKET/tech-approach/
+```
+
+### Step 9: Create Bedrock Knowledge Base (AWS Console)
+
+1. **Bedrock** → **Knowledge bases** (left sidebar, under Orchestration) → **Create**
+2. Select **"Create a knowledge base with a vector store"**
+3. **KB details:** Name: `rag-tool-kb`, let Bedrock create a new IAM role → **Next**
+4. **Data source:** Type: **Amazon S3**, browse and select your documents bucket → **Next**
+5. **Embeddings model:** Select **Titan Text Embeddings V2**, dimensions 1024 → **Next**
+6. **Vector database:** Select **Quick create a new vector store** → **Amazon S3 Vectors** → **Next**
+7. **Review** → **Create knowledge base**. Wait for status: **Ready** (1-3 min)
+8. **Record the Knowledge Base ID** (top of KB detail page, e.g., `ABCDEFGHIJ`)
+9. **Record the Data Source ID** (in Data sources section, e.g., `XXXXXXXXXX`)
+
+### Step 10: Sync the Knowledge Base
+
+On the KB detail page → Data source section → select your data source → click **Sync**. Wait for the green success banner.
+
+Or via CLI:
+```bash
+aws bedrock-agent start-ingestion-job --knowledge-base-id YOUR_KB_ID --data-source-id YOUR_DS_ID
+```
+
+### Step 11: Redeploy CDK with Knowledge Base IDs
+
+Now redeploy with the KB and DS IDs so Lambda functions can access the Knowledge Base:
 
 ```bash
 cd cdk
-cdk bootstrap aws://YOUR_ACCOUNT_ID/us-east-1
+cdk deploy RagToolStack -c knowledgeBaseId=YOUR_KB_ID -c dataSourceId=YOUR_DS_ID --require-approval broadening
 ```
 
-Replace `YOUR_ACCOUNT_ID` with your 12-digit AWS account ID (find it via `aws sts get-caller-identity`).
-
-### Step 5: Deploy Infrastructure
-
-```bash
-cd cdk
-cdk deploy --all
-```
-
-This creates two CloudFormation stacks:
-- **RagToolStack**: S3 buckets, Lambda, API Gateway, CloudFront, WAF
-- **RagToolBedrockStack**: Bedrock Knowledge Base, Data Source
-
-Note the outputs - you'll need the CloudFront URL, bucket names, and KB ID.
-
-### Step 6: Set Up Bedrock Knowledge Base (Manual Steps)
-
-> **Important**: The CDK creates the Bedrock KB framework, but you may need to complete the vector store configuration manually in the AWS Console, especially if using S3 Vectors.
-
-1. Go to **Amazon Bedrock** > **Knowledge bases** in the AWS Console
-2. Find the knowledge base created by CDK (named `rag-tool-kb`)
-3. Verify the data source points to your documents S3 bucket
-4. If the vector store needs configuration, follow the console wizard
-
-### Step 7: Update Lambda Environment Variables
-
-After the Bedrock stack deploys, update the Lambda functions with the actual Knowledge Base ID and Data Source ID:
-
-```bash
-# Get the IDs from CloudFormation outputs
-KB_ID=$(aws cloudformation describe-stacks --stack-name RagToolBedrockStack \
-    --query "Stacks[0].Outputs[?OutputKey=='KnowledgeBaseId'].OutputValue" --output text)
-DS_ID=$(aws cloudformation describe-stacks --stack-name RagToolBedrockStack \
-    --query "Stacks[0].Outputs[?OutputKey=='DataSourceId'].OutputValue" --output text)
-
-# Update each Lambda function's environment variables
-for fn in SearchFunction GenerateFunction UploadFunction FilesFunction AuditFunction CategoriesFunction; do
-    aws lambda update-function-configuration \
-        --function-name "RagToolStack-${fn}*" \
-        --environment "Variables={KNOWLEDGE_BASE_ID=${KB_ID},DATA_SOURCE_ID=${DS_ID},DOCUMENTS_BUCKET=$(aws cloudformation describe-stacks --stack-name RagToolStack --query "Stacks[0].Outputs[?OutputKey=='DocumentsBucketName'].OutputValue" --output text)}"
-done
-```
-
-### Step 8: Build and Deploy Frontend
+### Step 12: Build and Deploy Frontend
 
 ```bash
 cd frontend
+npm install
 npm run build
-
-# Get bucket name and deploy
-FRONTEND_BUCKET=$(aws cloudformation describe-stacks --stack-name RagToolStack \
-    --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" --output text)
-aws s3 sync dist/ "s3://${FRONTEND_BUCKET}/" --delete
-
-# Invalidate CloudFront cache
-DIST_ID=$(aws cloudformation describe-stacks --stack-name RagToolStack \
-    --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
-aws cloudfront create-invalidation --distribution-id "${DIST_ID}" --paths "/*"
+aws s3 sync dist/ s3://YOUR_FRONTEND_BUCKET/ --delete
+aws cloudfront create-invalidation --distribution-id YOUR_DISTRIBUTION_ID --paths "/*"
 ```
 
-### Step 9: Upload Documents and Sync
+### Step 13: Test the Application
 
-```bash
-# Upload documents to S3 category folders
-aws s3 cp your-tech-doc.pdf s3://YOUR-DOCUMENTS-BUCKET/tech-approach/
-aws s3 cp your-resume.pdf s3://YOUR-DOCUMENTS-BUCKET/resumes/
+Open your `DistributionUrl` in a browser (from an allowed IP).
 
-# Trigger Knowledge Base sync
-./scripts/sync-knowledge-base.sh
-```
-
-### Step 10: Access the Application
-
-Get the CloudFront URL:
-```bash
-aws cloudformation describe-stacks --stack-name RagToolStack \
-    --query "Stacks[0].Outputs[?OutputKey=='DistributionUrl'].OutputValue" --output text
-```
-
-Open the URL in your browser (from an allowed IP address).
-
----
-
-## Configuration
-
-### Central Configuration File: `cdk/lib/config.ts`
-
-This is the single source of truth for the entire application:
-
-- **CATEGORIES**: Document categories (add new ones here)
-- **ALLOWED_IPS**: IP addresses/CIDRs allowed to access the tool
-- **BEDROCK_MODELS**: Model IDs for embedding, generation, and audit
-- **RESOURCE_NAMES**: AWS resource naming conventions
-- **TONE_OPTIONS**: Available writing tones for generation
-- **DOCUMENT_PROCESSING**: Chunk size and supported file types
+1. **File Manager tab** — verify your uploaded documents appear
+2. **Search & Generate tab** — enter a query, select a category, click Search
+3. **Audit tab** — upload two files and run an audit
 
 ---
 
 ## Adding New Categories
 
-To add a new document category (e.g., "Cost Volume"):
-
-1. **Edit `cdk/lib/config.ts`** - Add a new entry to the CATEGORIES array:
-   ```typescript
-   {
-     id: 'cost-volume',
-     label: 'Cost Volume',
-     s3Prefix: 'cost-volume/',
-     description: 'Cost proposals and pricing volumes',
-   },
-   ```
-
-2. **Redeploy CDK**: `cd cdk && cdk deploy --all`
-
-3. **Create the S3 folder**: `aws s3api put-object --bucket YOUR-BUCKET --key "cost-volume/" --content-length 0`
-
-4. **Upload documents**: `aws s3 cp your-cost-doc.pdf s3://YOUR-BUCKET/cost-volume/`
-
-5. **Sync Knowledge Base**: `./scripts/sync-knowledge-base.sh`
-
-The new category will automatically appear in the frontend dropdowns.
+1. Edit `cdk/lib/config.ts` — add entry to CATEGORIES array
+2. Redeploy: `cd cdk && cdk deploy RagToolStack -c knowledgeBaseId=X -c dataSourceId=Y`
+3. Create S3 folder: `aws s3api put-object --bucket BUCKET --key "new-category/" --content-length 0`
+4. Upload documents and sync KB
+5. Rebuild frontend: `cd frontend && npm run build && aws s3 sync dist/ s3://FRONTEND_BUCKET/ --delete`
 
 ---
 
 ## Troubleshooting
 
-### "Access Denied" when accessing the application
-- Your IP is not in the WAF allowlist. Update `ALLOWED_IPS` in `cdk/lib/config.ts` and redeploy.
-
-### Search returns no results
-- Documents may not be indexed yet. Run `./scripts/sync-knowledge-base.sh` and wait for completion.
-- Check that documents are in the correct S3 category folder.
-
-### Lambda timeout errors
-- The audit function may need more time for large documents. Increase the timeout in `rag-stack.ts`.
-
-### "Model not available" errors
-- Ensure you've enabled Bedrock model access (Step 1 of setup).
-- Check that you're deploying in `us-east-1` where the models are available.
-
-### Frontend not updating after deploy
-- Run CloudFront cache invalidation: `aws cloudfront create-invalidation --distribution-id YOUR_DIST_ID --paths "/*"`
-
----
-
-## Cost Estimates
-
-For a small team (~5 users, ~100 queries/day, ~500 documents):
-
-| Service | Monthly Cost |
-|---------|-------------|
-| S3 (Standard) | $1-3 |
-| CloudFront | $1-2 |
-| WAF | $6 |
-| API Gateway | <$1 |
-| Lambda | $1-5 |
-| Bedrock Titan Embed | <$1 |
-| Bedrock Claude Haiku | $5-15 |
-| Bedrock Claude Sonnet | $2-10 |
-| **Total** | **~$20-50** |
+| Problem | Fix |
+|---------|-----|
+| 403 Forbidden | Your IP isn't in the WAF allowlist. Update `ALLOWED_IPS` in config.ts, redeploy. |
+| Search returns nothing | KB not synced. Go to Bedrock > KB > Sync. Wait a few minutes after sync completes. |
+| Lambda timeout | Audit timeout is 180s. For very large docs, increase in rag-stack.ts and redeploy. |
+| Model errors | Complete the Anthropic First Time Use form (Step 1). Verify in Bedrock Playground. |
+| Frontend stale | Invalidate CloudFront: `aws cloudfront create-invalidation --distribution-id ID --paths "/*"` |
+| Module not found in Lambda | Lambda layer not built. Run Step 3 again, then redeploy CDK. |
 
 ---
 
 ## Security
 
-- **IP Restriction**: AWS WAF blocks all traffic except from allowed IP CIDRs
-- **No Public S3**: All buckets use BlockPublicAccess; frontend served via CloudFront OAC
-- **Encryption**: SSE-S3 encryption on all S3 buckets
-- **IAM Least Privilege**: Lambda roles only have permissions they need
-- **HTTPS Only**: CloudFront enforces HTTPS for all connections
-- **Origin Verification**: Custom header prevents direct API Gateway access
+- **IP restriction**: WAF blocks all traffic except allowed CIDRs
+- **No public S3**: All buckets use BlockPublicAccess; frontend via CloudFront OAC
+- **Encryption**: SSE-S3 on all buckets
+- **IAM least privilege**: Lambda roles have only required permissions
+- **HTTPS only**: CloudFront enforces HTTPS
+- **Origin verification**: Custom header prevents bypassing WAF via direct API Gateway access

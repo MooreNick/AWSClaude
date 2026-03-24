@@ -186,30 +186,7 @@ IMPORTANT: Respond with ONLY the JSON object, no additional text before or after
         # ====================================================================
 
         # Attempt to parse the response as JSON
-        try:
-            # Try to parse the entire response as JSON
-            audit_report = json.loads(audit_response)
-        except json.JSONDecodeError:
-            # If direct parse fails, try to extract JSON from markdown code blocks
-            try:
-                # Look for JSON between ```json and ``` markers
-                json_start = audit_response.find('{')
-                json_end = audit_response.rfind('}') + 1
-                if json_start >= 0 and json_end > json_start:
-                    # Extract and parse the JSON substring
-                    audit_report = json.loads(audit_response[json_start:json_end])
-                else:
-                    # If no JSON found, return the raw text as the report
-                    audit_report = {
-                        'summary': 'Audit completed (raw text response)',
-                        'rawResponse': audit_response,
-                    }
-            except json.JSONDecodeError:
-                # If all JSON parsing fails, return the raw text
-                audit_report = {
-                    'summary': 'Audit completed (could not parse structured response)',
-                    'rawResponse': audit_response,
-                }
+        audit_report = _parse_audit_json(audit_response)
 
         # ====================================================================
         # RESPONSE - Return the structured audit report
@@ -250,3 +227,49 @@ IMPORTANT: Respond with ONLY the JSON object, no additional text before or after
                 'message': str(e),
             }),
         }
+
+
+def _parse_audit_json(response_text: str) -> dict:
+    """Parse the audit JSON from Claude's response text.
+
+    Tries multiple strategies: direct parse, code block extraction,
+    brace-matched extraction, and finally falls back to raw text.
+    """
+    # Strategy 1: Try direct JSON parse
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: Extract from ```json code block
+    if '```json' in response_text:
+        try:
+            start = response_text.index('```json') + 7
+            end = response_text.index('```', start)
+            return json.loads(response_text[start:end].strip())
+        except (ValueError, json.JSONDecodeError):
+            pass
+
+    # Strategy 3: Find the outermost matching braces using a counter
+    try:
+        first_brace = response_text.index('{')
+        depth = 0
+        end_pos = first_brace
+        for i in range(first_brace, len(response_text)):
+            if response_text[i] == '{':
+                depth += 1
+            elif response_text[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    end_pos = i + 1
+                    break
+        if end_pos > first_brace:
+            return json.loads(response_text[first_brace:end_pos])
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    # Strategy 4: Return raw text as fallback
+    return {
+        'summary': 'Audit completed (could not parse structured response)',
+        'rawResponse': response_text,
+    }
