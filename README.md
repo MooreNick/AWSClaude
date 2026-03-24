@@ -2,6 +2,8 @@
 
 Fully AWS-hosted tool for searching, generating, and auditing documents using Retrieval Augmented Generation (RAG). Uses Amazon Bedrock Knowledge Bases, Lambda, API Gateway, CloudFront, and WAF.
 
+**You do NOT need admin rights on your computer.** The entire setup runs in AWS CloudShell (a free browser-based terminal inside the AWS Console that already has Node.js, Python, AWS CLI, and CDK pre-installed).
+
 ---
 
 ## What This Tool Does
@@ -37,161 +39,133 @@ User (Allowed IP) → WAF → CloudFront → S3 (React frontend)
 
 ## Prerequisites
 
-Install these on the machine where you will run deployment commands:
-
-1. **Node.js 18+** — https://nodejs.org/ (verify: `node --version`)
-2. **Python 3.12+** — https://python.org/ (verify: `python3 --version`)
-3. **AWS CLI v2** — https://aws.amazon.com/cli/ (verify: `aws --version`)
-4. **AWS CDK CLI** — `npm install -g aws-cdk` (verify: `cdk --version`)
-5. **AWS account** with an IAM user that has:
-   - AdministratorAccess (for CDK deployment)
-   - `aws-marketplace:Subscribe` permission (for Bedrock model auto-subscription)
-
-Configure credentials: `aws configure` → enter Access Key, Secret Key, region `us-east-1`, output `json`
+- An **AWS account** you can log into at https://console.aws.amazon.com/
+- Your IAM user must have **AdministratorAccess** and **AWSMarketplaceFullAccess** policies attached
+- That's it. **No local software installation needed.** Everything runs in AWS CloudShell.
 
 ---
 
-## Setup Instructions (Complete Deployment Guide)
+## Setup Instructions
 
-### Step 1: Complete the Anthropic First-Time-Use Form
+**All commands in this guide are run inside AWS CloudShell** (a free browser terminal in the AWS Console). See Step 1 below to open it.
 
-Bedrock models are enabled by default in commercial regions. Amazon Titan models work immediately. **Anthropic Claude models require a one-time use case form** per account.
+For the most detailed step-by-step instructions with inputs, outputs, and troubleshooting for every step, see **setup-steps.csv**.
 
-1. Sign in to **AWS Console** → region **us-east-1 (N. Virginia)**
-2. Go to **Amazon Bedrock** → **Model catalog** (left sidebar)
-3. Click on any **Anthropic Claude** model (e.g., Claude 3.5 Haiku)
-4. You'll be prompted to fill out a First Time Use form:
-   - Company name, website, intended users, industry, use case description
-   - Example use case: "Internal document search and generation tool"
-5. Submit. **Access is granted immediately.**
-6. If you are NOT prompted, your account already has access. Verify by running a test in **Bedrock > Playground**.
+---
 
-### Step 2: Configure Your IP Address
+### Step 1: Open AWS CloudShell
 
-1. Go to https://whatismyip.com and note your **IPv4 address**
-2. Edit `cdk/lib/config.ts`, find `ALLOWED_IPS`, replace the placeholder:
-   ```typescript
-   export const ALLOWED_IPS: string[] = [
-     '203.0.113.45/32',  // Your actual IP here
-   ];
-   ```
+1. Sign in to **AWS Console** at https://console.aws.amazon.com/
+2. Set region to **us-east-1** (top-right dropdown → US East N. Virginia)
+3. Click the **CloudShell icon** (looks like a terminal `>_` in the top navigation bar, near the search bar)
+4. Wait for the terminal to initialize (first time takes ~30 seconds)
 
-### Step 3: Build the Lambda Layer
+CloudShell comes with Node.js, Python, AWS CLI, git, and CDK already installed.
+
+### Step 2: Complete the Anthropic First-Time-Use Form
+
+1. Go to **Amazon Bedrock** → **Model catalog** (left sidebar)
+2. Click on any **Anthropic Claude** model (e.g., Claude 3.5 Haiku)
+3. Fill out the First Time Use form and submit
+4. Access is granted immediately
+
+### Step 3: Clone the Repository into CloudShell
+
+```bash
+git clone https://github.com/MooreNick/AWSClaude.git
+cd AWSClaude
+```
+
+### Step 4: Configure Your IP Address
+
+Find your IP at https://whatismyip.com, then edit the config:
+
+```bash
+nano cdk/lib/config.ts
+```
+
+Find the `ALLOWED_IPS` array and replace `0.0.0.0/32` with your IP (e.g., `203.0.113.45/32`). Press Ctrl+O to save, Ctrl+X to exit.
+
+### Step 5: Build Lambda Layer and Install CDK Dependencies
 
 ```bash
 cd backend
 mkdir -p layers/dependencies/python
 pip install -r requirements.txt -t layers/dependencies/python/
-```
-
-This installs `pypdf` and `python-docx` into the Lambda layer directory. (boto3 is already in the Lambda runtime.)
-
-### Step 4: Install CDK Dependencies
-
-```bash
-cd cdk
+cd ../cdk
 npm install
 ```
 
-### Step 5: Bootstrap CDK (First Time Only)
+### Step 6: Bootstrap and Deploy Infrastructure (First Pass)
 
 ```bash
 cdk bootstrap
-```
-
-### Step 6: Deploy Core Infrastructure (First Pass — Without KB)
-
-```bash
 cdk deploy RagToolStack --require-approval broadening
 ```
 
-Type **y** when prompted to approve IAM changes. Takes 5-10 minutes.
+Type **y** when prompted. Save the output values (DistributionUrl, DocumentsBucketName, FrontendBucketName, DistributionId).
 
-**Save the output values:**
-- `DistributionUrl` — your application URL
-- `DocumentsBucketName` — where documents go
-- `FrontendBucketName` — where the frontend goes
-- `DistributionId` — for cache invalidation
-
-Retrieve them anytime: `aws cloudformation describe-stacks --stack-name RagToolStack --query "Stacks[0].Outputs" --output table`
-
-### Step 7: Create S3 Category Folders
-
-Replace `BUCKET` with your `DocumentsBucketName`:
+### Step 7: Create S3 Folders and Upload Documents
 
 ```bash
+# Replace BUCKET with your DocumentsBucketName from Step 6
 aws s3api put-object --bucket BUCKET --key "tech-approach/" --content-length 0
 aws s3api put-object --bucket BUCKET --key "organizational-approach/" --content-length 0
 aws s3api put-object --bucket BUCKET --key "past-performance/" --content-length 0
 aws s3api put-object --bucket BUCKET --key "resumes/" --content-length 0
 ```
 
-### Step 8: Upload Your Documents
+Upload documents from your local machine to CloudShell using the **Actions → Upload file** button in the CloudShell toolbar, then:
 
 ```bash
-aws s3 cp your-tech-proposal.pdf s3://BUCKET/tech-approach/
-aws s3 cp your-resume.pdf s3://BUCKET/resumes/
-# Or upload a whole folder:
-aws s3 sync ./my-docs/ s3://BUCKET/tech-approach/
+aws s3 cp uploaded-file.pdf s3://BUCKET/tech-approach/
 ```
 
-### Step 9: Create Bedrock Knowledge Base (AWS Console)
+### Step 8: Create Bedrock Knowledge Base (Console Wizard)
 
-1. **Bedrock** → **Knowledge bases** (left sidebar, under Orchestration) → **Create**
-2. Select **"Create a knowledge base with a vector store"**
-3. **KB details:** Name: `rag-tool-kb`, let Bedrock create a new IAM role → **Next**
-4. **Data source:** Type: **Amazon S3**, browse and select your documents bucket → **Next**
-5. **Embeddings model:** Select **Titan Text Embeddings V2**, dimensions 1024 → **Next**
-6. **Vector database:** Select **Quick create a new vector store** → **Amazon S3 Vectors** → **Next**
-7. **Review** → **Create knowledge base**. Wait for status: **Ready** (1-3 min)
-8. **Record the Knowledge Base ID** (top of KB detail page, e.g., `ABCDEFGHIJ`)
-9. **Record the Data Source ID** (in Data sources section, e.g., `XXXXXXXXXX`)
+1. **Bedrock** → **Knowledge bases** → **Create** → **Create a knowledge base with a vector store**
+2. Name: `rag-tool-kb`, let Bedrock create IAM role → **Next**
+3. Data source: **Amazon S3**, select your documents bucket → **Next**
+4. Embeddings: **Titan Text Embeddings V2**, dimensions 1024 → **Next**
+5. Vector store: **Quick create** → **Amazon S3 Vectors** → **Next**
+6. **Create knowledge base**. Wait for Ready status.
+7. Copy the **Knowledge Base ID** and **Data Source ID**
 
-### Step 10: Sync the Knowledge Base
+### Step 9: Sync the Knowledge Base
 
-On the KB detail page → Data source section → select your data source → click **Sync**. Wait for the green success banner.
+On the KB detail page → Data source → **Sync**. Wait for green banner.
 
-Or via CLI:
-```bash
-aws bedrock-agent start-ingestion-job --knowledge-base-id YOUR_KB_ID --data-source-id YOUR_DS_ID
-```
+### Step 10: Redeploy with Knowledge Base IDs
 
-### Step 11: Redeploy CDK with Knowledge Base IDs
-
-Now redeploy with the KB and DS IDs so Lambda functions can access the Knowledge Base:
+Back in CloudShell:
 
 ```bash
-cd cdk
+cd ~/AWSClaude/cdk
 cdk deploy RagToolStack -c knowledgeBaseId=YOUR_KB_ID -c dataSourceId=YOUR_DS_ID --require-approval broadening
 ```
 
-### Step 12: Build and Deploy Frontend
+### Step 11: Build and Deploy Frontend
 
 ```bash
-cd frontend
+cd ~/AWSClaude/frontend
 npm install
 npm run build
 aws s3 sync dist/ s3://YOUR_FRONTEND_BUCKET/ --delete
-aws cloudfront create-invalidation --distribution-id YOUR_DISTRIBUTION_ID --paths "/*"
+aws cloudfront create-invalidation --distribution-id YOUR_DIST_ID --paths "/*"
 ```
 
-### Step 13: Test the Application
+### Step 12: Access the Application
 
-Open your `DistributionUrl` in a browser (from an allowed IP).
-
-1. **File Manager tab** — verify your uploaded documents appear
-2. **Search & Generate tab** — enter a query, select a category, click Search
-3. **Audit tab** — upload two files and run an audit
+Open your `DistributionUrl` in a browser from an allowed IP address.
 
 ---
 
 ## Adding New Categories
 
-1. Edit `cdk/lib/config.ts` — add entry to CATEGORIES array
-2. Redeploy: `cd cdk && cdk deploy RagToolStack -c knowledgeBaseId=X -c dataSourceId=Y`
-3. Create S3 folder: `aws s3api put-object --bucket BUCKET --key "new-category/" --content-length 0`
-4. Upload documents and sync KB
-5. Rebuild frontend: `cd frontend && npm run build && aws s3 sync dist/ s3://FRONTEND_BUCKET/ --delete`
+1. In CloudShell: `nano ~/AWSClaude/cdk/lib/config.ts` — add entry to CATEGORIES
+2. `cd ~/AWSClaude/cdk && cdk deploy RagToolStack -c knowledgeBaseId=X -c dataSourceId=Y`
+3. Create S3 folder, upload docs, sync KB
+4. Rebuild frontend: `cd ~/AWSClaude/frontend && npm run build && aws s3 sync dist/ s3://FRONTEND_BUCKET/ --delete`
 
 ---
 
@@ -199,20 +173,20 @@ Open your `DistributionUrl` in a browser (from an allowed IP).
 
 | Problem | Fix |
 |---------|-----|
-| 403 Forbidden | Your IP isn't in the WAF allowlist. Update `ALLOWED_IPS` in config.ts, redeploy. |
-| Search returns nothing | KB not synced. Go to Bedrock > KB > Sync. Wait a few minutes after sync completes. |
-| Lambda timeout | Audit timeout is 180s. For very large docs, increase in rag-stack.ts and redeploy. |
-| Model errors | Complete the Anthropic First Time Use form (Step 1). Verify in Bedrock Playground. |
-| Frontend stale | Invalidate CloudFront: `aws cloudfront create-invalidation --distribution-id ID --paths "/*"` |
-| Module not found in Lambda | Lambda layer not built. Run Step 3 again, then redeploy CDK. |
+| 403 Forbidden | Your IP isn't allowed. Update ALLOWED_IPS in config.ts, redeploy. |
+| Search returns nothing | KB not synced. Bedrock > KB > Sync. Wait 2-3 min. |
+| CloudShell session expired | CloudShell preserves files in ~/. Just `cd ~/AWSClaude` and continue. |
+| CloudShell storage full | CloudShell has 1GB storage. Delete node_modules and reinstall if needed. |
+| Lambda timeout | Increase timeout in rag-stack.ts and redeploy. |
+| Model errors | Complete Anthropic First Time Use form. Test in Bedrock Playground. |
 
 ---
 
 ## Security
 
 - **IP restriction**: WAF blocks all traffic except allowed CIDRs
-- **No public S3**: All buckets use BlockPublicAccess; frontend via CloudFront OAC
+- **No public S3**: All buckets use BlockPublicAccess
 - **Encryption**: SSE-S3 on all buckets
 - **IAM least privilege**: Lambda roles have only required permissions
 - **HTTPS only**: CloudFront enforces HTTPS
-- **Origin verification**: Custom header prevents bypassing WAF via direct API Gateway access
+- **Origin verification**: Custom header prevents bypassing WAF
