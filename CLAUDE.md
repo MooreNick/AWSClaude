@@ -6,16 +6,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AI Document Assistant — a React (Vite) frontend that talks to an AWS Lambda backend via API Gateway. Three workflows: S3 document management for RAG, RAG-powered content generation, and document compliance auditing.
 
-## Current State / What Has Been Done
+## Current State — Fully Deployed
 
-The frontend code at `/home/ubuntu/frontend` has been **fully adapted** to work with the AWS Lambda backend at `/home/ubuntu/AWSClaude` (cloned from https://github.com/MooreNick/AWSClaude). All API translation is complete — the frontend now sends JSON with base64-encoded files instead of multipart/form-data, routes map to the correct backend endpoints, and option values match the backend config.
+The entire stack is deployed and live. The frontend has been adapted to work with the AWS Lambda backend (JSON with base64-encoded files, correct route mapping, option values matching backend config).
 
-### What remains to be done
+### Deployed Infrastructure
 
-1. **Deploy the backend CDK stack** (requires AWS credentials — see Deployment section below)
-2. **Create a Bedrock Knowledge Base** (manual step in AWS Console — see Prerequisites)
-3. **Update WAF IP allowlist** in `cdk/lib/config.ts` with the new EC2 public IP
-4. **Build and deploy the frontend** to the S3/CloudFront created by CDK
+| Resource | Value |
+|----------|-------|
+| **App URL** | `https://d3jwts8kiyxdij.cloudfront.net` |
+| **API Gateway** | `https://ejijo61aeh.execute-api.us-east-1.amazonaws.com` |
+| **Frontend Bucket** | `023530626172-rag-frontend` |
+| **Documents Bucket** | `023530626172-rag-documents` |
+| **CloudFront Distribution ID** | `E25VNHJIPOOYU` |
+| **Knowledge Base ID** | `EYOS38B1QP` |
+| **Data Source ID** | `FBMDB4ZGS3` |
+| **WAF** | Default allow — manage access via AWS Console |
+
+### Knowledge Base Sync
+
+After uploading documents to the Documents bucket, sync the Knowledge Base to index them:
+
+```bash
+cd /home/ubuntu/AWSClaude
+chmod +x scripts/sync-knowledge-base.sh
+./scripts/sync-knowledge-base.sh EYOS38B1QP FBMDB4ZGS3
+```
+
+To seed sample data and trigger a sync:
+
+```bash
+chmod +x scripts/seed-data.sh
+./scripts/seed-data.sh EYOS38B1QP FBMDB4ZGS3
+```
 
 ## Frontend Commands
 
@@ -81,140 +104,56 @@ CloudFront serves as unified entry point:
 - Same-origin = no CORS needed
 - WAF IP allowlist controls access
 
-## Deployment Instructions
+## Redeployment Instructions
 
-### Prerequisites (AWS Console — do these first)
+If you need to redeploy or update the stack:
 
-1. **Enable Bedrock model access** in us-east-1:
-   - `amazon.titan-embed-text-v2:0` (embeddings)
-   - `anthropic.claude-3-5-haiku-20241022-v1:0` (generation)
-   - `anthropic.claude-sonnet-4-20250514-v1:0` (auditing)
-   - Go to: AWS Console → Bedrock → Model access → Enable specific models
-
-2. **Create a Bedrock Knowledge Base** (must be done manually before CDK deploy):
-   - Go to: AWS Console → Bedrock → Knowledge bases → Create
-   - Name: `rag-tool-kb`
-   - Embedding model: Titan Text Embeddings V2
-   - Vector store: use default (Amazon OpenSearch Serverless)
-   - Data source: S3 — you'll point this to the documents bucket **after** CDK creates it, OR create the KB first and note the IDs
-   - Chunking: 512 tokens, 20% overlap
-   - **Note the Knowledge Base ID and Data Source ID** — you'll need these for deployment
-
-3. **Determine your public IP** for WAF allowlisting:
-   ```bash
-   curl -s ifconfig.me
-   ```
-
-### Step 1: Update WAF IP allowlist
-
-Edit `/home/ubuntu/AWSClaude/cdk/lib/config.ts`, find the `ALLOWED_IPS` array and replace `0.0.0.0/32` with your actual IP:
-
-```typescript
-export const ALLOWED_IPS: string[] = [
-  'YOUR.PUBLIC.IP/32',
-];
-```
-
-### Step 2: Install CDK globally
+### Redeploy CDK stack
 
 ```bash
-npm install -g aws-cdk
-```
-
-### Step 3: Deploy the backend
-
-```bash
-cd /home/ubuntu/AWSClaude
-chmod +x scripts/deploy.sh
-
-# The deploy script builds Lambda layers, installs CDK deps, bootstraps, and deploys
-# It also tries to build the repo's own frontend — we'll use our frontend instead
-# Pass KB and DS IDs if you have them:
-./scripts/deploy.sh <KNOWLEDGE_BASE_ID> <DATA_SOURCE_ID>
-
-# Or deploy without KB (Lambda search/generate won't work until set):
-./scripts/deploy.sh
-```
-
-**Note:** The deploy script builds the repo's `/home/ubuntu/AWSClaude/frontend/` (TypeScript/Tailwind). After it deploys, we overwrite with our frontend build. Alternatively, you can run CDK deploy manually:
-
-```bash
-cd /home/ubuntu/AWSClaude/backend
-mkdir -p layers/dependencies/python
-pip install -r requirements.txt -t layers/dependencies/python/
-
 cd /home/ubuntu/AWSClaude/cdk
-npm install
-cdk bootstrap
-cdk deploy RagToolStack --require-approval broadening \
-  -c knowledgeBaseId=<KB_ID> \
-  -c dataSourceId=<DS_ID>
+cdk deploy RagToolStack --require-approval never \
+  -c knowledgeBaseId=EYOS38B1QP \
+  -c dataSourceId=FBMDB4ZGS3
 ```
 
-### Step 4: Note the CDK outputs
-
-After deployment, get the stack outputs:
-
-```bash
-aws cloudformation describe-stacks --stack-name RagToolStack \
-  --query "Stacks[0].Outputs" --output table
-```
-
-You need:
-- **DistributionUrl** — the CloudFront URL (your app's public URL)
-- **FrontendBucketName** — S3 bucket for frontend static files
-- **DocumentsBucketName** — S3 bucket for RAG documents
-- **DistributionId** — for cache invalidation
-
-### Step 5: Build and deploy the frontend
+### Rebuild and deploy frontend
 
 ```bash
 cd /home/ubuntu/frontend
 npm run build
-
-# Get bucket name and distribution ID from stack outputs
-FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
-  --stack-name RagToolStack \
-  --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" \
-  --output text)
-
-DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
-  --stack-name RagToolStack \
-  --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" \
-  --output text)
-
-# Upload to S3
-aws s3 sync dist/ "s3://${FRONTEND_BUCKET}/" --delete
-
-# Invalidate CloudFront cache
-aws cloudfront create-invalidation \
-  --distribution-id "${DISTRIBUTION_ID}" \
-  --paths "/*"
+aws s3 sync dist/ "s3://023530626172-rag-frontend/" --delete
+aws cloudfront create-invalidation --distribution-id E25VNHJIPOOYU --paths "/*"
 ```
 
-### Step 6: Connect Knowledge Base to Documents Bucket
-
-If you created the KB before CDK deploy, update its data source to point to the `DocumentsBucketName` bucket. If you created the KB after, sync it:
+### Sync Knowledge Base (after uploading documents)
 
 ```bash
 cd /home/ubuntu/AWSClaude
-chmod +x scripts/sync-knowledge-base.sh
-./scripts/sync-knowledge-base.sh <KNOWLEDGE_BASE_ID> <DATA_SOURCE_ID>
+./scripts/sync-knowledge-base.sh EYOS38B1QP FBMDB4ZGS3
 ```
 
-### Step 7: Seed sample data (optional)
+### Seed sample data (optional)
 
 ```bash
-chmod +x /home/ubuntu/AWSClaude/scripts/seed-data.sh
-./scripts/seed-data.sh
+cd /home/ubuntu/AWSClaude
+./scripts/seed-data.sh EYOS38B1QP FBMDB4ZGS3
 ```
 
-### Step 8: Verify
+### WAF IP management
 
-1. Open the CloudFront URL in your browser
-2. Test Document Library: list files, upload a small .txt file
-3. Test Generate: enter context, select options, verify retrieval and generation
-4. Test Audit: upload two files, verify issues display
+WAF is set to allow all IPs by default. To restrict access, edit IP allowlists in `cdk/lib/config.ts` (`ALLOWED_IPS` for IPv4, `ALLOWED_IPS_V6` for IPv6) and change the WAF default action back to `block` in `cdk/lib/rag-stack.ts`, then redeploy.
+
+### Fresh deployment (new AWS account)
+
+1. Enable Bedrock model access in us-east-1 (Titan Embed V2, Claude 3.5 Haiku, Claude Sonnet 4)
+2. Install CDK: `npm install -g aws-cdk`
+3. Build Lambda layer: `cd backend && mkdir -p layers/dependencies/python && pip install -r requirements.txt -t layers/dependencies/python/`
+4. Bootstrap and deploy: `cd cdk && npm install && cdk bootstrap && cdk deploy RagToolStack --require-approval never`
+5. Create Bedrock Knowledge Base (name: `rag-tool-kb`, embedding: Titan V2, vector store: OpenSearch Serverless, data source: S3 documents bucket, chunking: 512 tokens / 20% overlap)
+6. Redeploy with KB IDs: `cdk deploy RagToolStack --require-approval never -c knowledgeBaseId=<KB_ID> -c dataSourceId=<DS_ID>`
+7. Build and deploy frontend to the S3 frontend bucket
+8. Verify all three workflows at the CloudFront URL
 
 ## Development (local dev server against deployed backend)
 

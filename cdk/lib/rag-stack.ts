@@ -27,6 +27,7 @@ import * as path from 'path';
 // Import our central configuration values
 import {
   ALLOWED_IPS,
+  ALLOWED_IPS_V6,
   RESOURCE_NAMES,
   AWS_REGION,
   BEDROCK_MODELS,
@@ -277,7 +278,7 @@ export class RagStack extends cdk.Stack {
     // WAF - IP-based access restriction
     // ========================================================================
 
-    // IP Set with allowed addresses
+    // IP Set with allowed IPv4 addresses
     const ipSet = new wafv2.CfnIPSet(this, 'AllowedIpSet', {
       name: 'rag-tool-allowed-ips',
       scope: 'CLOUDFRONT',
@@ -286,11 +287,20 @@ export class RagStack extends cdk.Stack {
       description: 'IP addresses allowed to access the RAG tool',
     });
 
-    // Web ACL: default BLOCK, allow only listed IPs
+    // IP Set with allowed IPv6 addresses
+    const ipSetV6 = new wafv2.CfnIPSet(this, 'AllowedIpSetV6', {
+      name: 'rag-tool-allowed-ips-v6',
+      scope: 'CLOUDFRONT',
+      ipAddressVersion: 'IPV6',
+      addresses: ALLOWED_IPS_V6,
+      description: 'IPv6 addresses allowed to access the RAG tool',
+    });
+
+    // Web ACL: default BLOCK, allow only listed IPs (IPv4 OR IPv6)
     const webAcl = new wafv2.CfnWebACL(this, 'WebAcl', {
       name: RESOURCE_NAMES.wafAclName,
       scope: 'CLOUDFRONT',
-      defaultAction: { block: {} },
+      defaultAction: { allow: {} },
       visibilityConfig: {
         cloudWatchMetricsEnabled: true,
         metricName: 'rag-tool-waf',
@@ -302,8 +312,19 @@ export class RagStack extends cdk.Stack {
           priority: 0,
           action: { allow: {} },
           statement: {
-            ipSetReferenceStatement: {
-              arn: ipSet.attrArn,
+            orStatement: {
+              statements: [
+                {
+                  ipSetReferenceStatement: {
+                    arn: ipSet.attrArn,
+                  },
+                },
+                {
+                  ipSetReferenceStatement: {
+                    arn: ipSetV6.attrArn,
+                  },
+                },
+              ],
             },
           },
           visibilityConfig: {

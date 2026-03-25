@@ -60,9 +60,15 @@ export const AWS_REGION = 'us-east-1';
 // Format: ['x.x.x.x/32'] for single IPs, ['x.x.x.x/24'] for ranges
 // ============================================================================
 export const ALLOWED_IPS: string[] = [
-  '0.0.0.0/32', // PLACEHOLDER - Replace with your actual IP before deploying
-  // Add additional allowed IPs/CIDRs below:
-  // '203.0.113.0/24',
+  '44.206.235.60/32',
+  '24.154.162.38/32',
+  '71.115.205.39/32',
+  '69.253.241.226/32',
+];
+
+export const ALLOWED_IPS_V6: string[] = [
+  '2600:4040:60a0:e900:c19a:e16e:d518:7d6e/128',
+  '2601:47:4a03:59d0:a953:f491:1095:b958/128',
 ];
 
 // ============================================================================
